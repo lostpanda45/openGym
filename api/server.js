@@ -37,6 +37,7 @@ import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
 import { atomicWrite as durableWrite } from './durable.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
+import { realReadings, mergeReadings, fetchMeasurements } from './trendweight.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
@@ -88,6 +89,15 @@ const DEFAULT_LANG = (() => {
 // sign-in throttle asks (limitAddress below); the bundled compose file sets it, because the API
 // is reachable there only through the web container, which overwrites those headers.
 const TRUST_PROXY = /^(1|true|yes|on)$/i.test(process.env.TRUST_PROXY || '');
+// Optional daily weight import from TrendWeight (docs/SELF_HOSTING.md, "Importing weight from
+// TrendWeight"). Off unless a key is set; the account's scale readings are folded into each
+// profile's weigh-ins on a timer. The key is the account's own API key (Settings → API keys),
+// never a TrendWeight login. TRENDWEIGHT_UID restricts the import to one profile; without it
+// every profile on the instance receives the same readings, which is right for a single-account
+// self-host and wrong for a shared one, so a multi-user instance should set it.
+const TRENDWEIGHT_API_KEY = (process.env.TRENDWEIGHT_API_KEY || '').trim();
+const TRENDWEIGHT_UID = (process.env.TRENDWEIGHT_UID || '').trim();
+const TRENDWEIGHT_TICK_MS = Math.max(3600000, (+(process.env.TRENDWEIGHT_INTERVAL_HOURS || 6) || 6) * 3600000);
 // 90 days keeps someone who trains a few times a week permanently signed in without a stolen
 // cookie staying good for a year. Overridable because a family instance and one on the open
 // internet don't want the same number. Only affects cookies minted from now on — the expiry is
@@ -3057,6 +3067,68 @@ const server = http.createServer(async (req, res) => {
 // every other route's body still has to arrive within five minutes (bodyDeadline above).
 server.requestTimeout = 30 * 60000;
 server.headersTimeout = 60000;
+
+/* ---------- TrendWeight weight import (optional) ---------- */
+// One pull folds the account's real scale readings into a profile's weigh-ins and persists the
+// document the same way a push does. Kept separate from PUT /api/data because this write does not
+// come from a device: it derives the next document from the stored one, so there is no client
+// merge to reconcile, only the server's own bookkeeping to advance.
+function trendweightWriteState(uid, readings, unit) {
+  const cur = readStateStrict(uid);
+  if (cur === UNREADABLE || !cur || typeof cur !== 'object' || Array.isArray(cur)) return null;
+  const next = structuredClone(cur);
+  const r = mergeReadings(next.bodyweight, cur.deleted && cur.deleted.bodyweight, readings, { unit });
+  if (!r.added && !r.updated) return r;            // nothing to write
+  const curRev = Number(cur._rev) || 0;
+  // stampPut with `stamped: true`: the entries already carry their own `t`, and there is nothing
+  // a device left out to put back. It still merges the removal/edit records and notes prior
+  // values, so the stored document stays consistent with what a push produces.
+  try { stampPut(cur, next, { stamped: true }); } catch (e) { if (e instanceof RangeError) return null; throw e; }
+  next._rev = curRev + 1;
+  next._wids = [...(Array.isArray(cur._wids) ? cur._wids : []), ...(cur._wid ? [cur._wid] : [])]
+    .filter(x => typeof x === 'string').slice(-WID_KEEP);
+  next._wid = crypto.randomBytes(8).toString('hex');
+  next._ts = Date.now();
+  const text = JSON.stringify(next);
+  atomicWrite(stateFile(uid), text);
+  stateCache.delete(uid);
+  if (MEDIA_ON) { try { MEDIA.noteState(uid, next); } catch (e) { console.error('media noteState', e); } }
+  return r;
+}
+
+async function trendweightPull() {
+  let readings;
+  try {
+    readings = realReadings(await fetchMeasurements({ apiKey: TRENDWEIGHT_API_KEY }));
+  } catch (e) {
+    console.error('trendweight pull:', e?.message || e);
+    return;
+  }
+  if (!readings.length) return;
+  for (const user of db.users) {
+    if (user.disabled) continue;
+    if (TRENDWEIGHT_UID && user.id !== TRENDWEIGHT_UID) continue;
+    try {
+      const S = readStateStrict(user.id);
+      if (S === UNREADABLE) continue;              // a damaged file is restore-worthy, not overwritable
+      const r = trendweightWriteState(user.id, readings, S?.unit === 'lb' ? 'lb' : 'kg');
+      if (r && (r.added || r.updated)) console.log(`trendweight: ${user.id} +${r.added} ~${r.updated}`);
+    } catch (e) {
+      console.error('trendweight merge', user.id, e?.message || e);
+    }
+  }
+}
+
+function startTrendweight() {
+  if (!TRENDWEIGHT_API_KEY) return;
+  // Once shortly after boot (catch up), then on the interval. Both unref'd so a one-shot test
+  // process that boots the server still exits.
+  setTimeout(() => { trendweightPull(); }, 20000).unref();
+  setInterval(() => { trendweightPull(); }, TRENDWEIGHT_TICK_MS).unref();
+  console.log(`trendweight import: every ${TRENDWEIGHT_TICK_MS / 3600000}h${TRENDWEIGHT_UID ? ` for ${TRENDWEIGHT_UID}` : ' for every profile'}`);
+}
+startTrendweight();
+
 // The port is read back off the listener rather than echoed from PORT, so the line states the
 // port that was actually bound: with PORT=0 the OS picks one, and a caller that did not choose it
 // (the tests spawn the server that way, and so does anyone running two instances on one box) has

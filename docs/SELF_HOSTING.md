@@ -268,6 +268,24 @@ first profile, so switching it on now does nothing. Do this instead:
 The [AI Coach](AI_COACH.md#turning-it-on), invite codes and recovery codes all live in that
 dashboard, so this is step one for each of them.
 
+### Importing weight from TrendWeight (optional)
+
+If your scale reports to [TrendWeight](https://trendweight.com), openGym can pull those daily
+readings in automatically instead of you typing each one:
+
+```bash
+TRENDWEIGHT_API_KEY=sk-...      # TrendWeight → Settings → API keys (shown once)
+TRENDWEIGHT_UID=                # optional: restrict to one profile's Account ID
+TRENDWEIGHT_INTERVAL_HOURS=6    # how often the api pulls (minimum 1)
+```
+
+The api container pulls your measurements on that interval and adds the **real scale readings**
+(days TrendWeight interpolated are skipped) to your weigh-in list, converting TrendWeight's
+kilograms to the unit your profile shows. A weigh-in you typed yourself is never overwritten, and
+one you delete in the app is not brought back. On a single-account instance you can leave
+`TRENDWEIGHT_UID` blank; on a shared instance set it, or every profile would receive the same
+readings. This is off unless `TRENDWEIGHT_API_KEY` is set.
+
 ### Default language
 
 An instance whose people share a language can start everyone in it:
