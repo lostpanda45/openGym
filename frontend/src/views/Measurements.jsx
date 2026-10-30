@@ -11,6 +11,7 @@ import {
 } from '../lib/measurements.js'
 import { fmtDate, fmtNum, todayISO, uid } from '../lib/format.js'
 import { trendPoints, trendChange } from '../lib/measurement-trend.js'
+import { ratioRows, verdict, GOOD_DIR } from '../lib/physique-ratios.js'
 import { t } from '../lib/i18n.js'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
@@ -212,9 +213,15 @@ export default function Measurements() {
     const pts = measurementSeries(S, f.key)
     const last = pts.at(-1)
     if (!last) return null
+    const unit = fieldUnit(f, S.unit)
     const ch = trendChange(pts)
-    return { field: f, key: f.key, value: last.y, unit: fieldUnit(f, S.unit), delta: ch ? ch.delta : null }
+    const id = f.key.startsWith('other:') ? f.key.slice(6) : f.key
+    return {
+      field: f, key: f.key, value: last.y, unit, delta: ch ? ch.delta : null,
+      move: verdict(ch ? ch.delta : null, GOOD_DIR[id] ?? 0, unit === '%' ? 0.3 : 0.5),
+    }
   }).filter(Boolean), [S, available])
+  const ratios = useMemo(() => ratioRows(S.measurements), [S.measurements])
 
   const remove = entry => confirmSheet({
     title: t('Delete measurements?'),
@@ -239,12 +246,24 @@ export default function Measurements() {
             background: 'transparent', color: 'inherit' }}>
           <div className="small dim" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t(g.field.label)}</div>
           <div style={{ fontWeight: 700, marginTop: 2 }}>{withUnit(g.value, g.unit)}</div>
-          {g.delta != null && Math.abs(g.delta) >= 0.05 && <div className="small" style={{ color: 'var(--label-2)', display: 'flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
+          {g.delta != null && Math.abs(g.delta) >= 0.05 && <div className="small" style={{ color: g.move === 'good' ? 'var(--teal)' : g.move === 'bad' ? 'var(--yellow)' : 'var(--label-2)', display: 'flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
             <Icon name={g.delta > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 11 }} />
             {withUnit(Math.abs(Math.round(g.delta * 10) / 10), g.unit)}
           </div>}
         </button>)}
       </div>
+      {ratios.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--sep-op)' }}>
+        {ratios.map(r => {
+          const color = r.move === 'good' ? 'var(--teal)' : r.move === 'bad' ? 'var(--yellow)' : 'var(--label-2)'
+          return <div key={r.id} style={{ padding: '2px 8px' }}>
+            <div className="small dim" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t(r.numLabel)} : {t(r.denLabel)}</div>
+            <div style={{ fontWeight: 700 }}>{r.value.toFixed(2)}</div>
+            {Math.abs(r.delta) >= 0.005 && <div className="small" style={{ color, display: 'flex', alignItems: 'center', gap: 3 }}>
+              <Icon name={r.delta > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 11 }} />{Math.abs(r.delta).toFixed(2)}
+            </div>}
+          </div>
+        })}
+      </div>}
     </div>}
 
     <div className="card">
