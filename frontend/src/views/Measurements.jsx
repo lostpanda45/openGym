@@ -10,6 +10,7 @@ import {
   measurementUnitLabel, zeroIsReading,
 } from '../lib/measurements.js'
 import { fmtDate, fmtNum, todayISO, uid } from '../lib/format.js'
+import { trendPoints, trendChange } from '../lib/measurement-trend.js'
 import { t } from '../lib/i18n.js'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
@@ -204,6 +205,16 @@ export default function Measurements() {
   const previous = all.at(-2)
   const delta = latest && previous ? Math.round((latest.y - previous.y) * 10) / 10 : null
   const recent = [...S.measurements].reverse()
+  // The trend is recomputed from the stored check-ins on every render, so a reading logged a
+  // minute ago is already in it. The panel and the chart share it, so they cannot disagree.
+  const trend = trendPoints(points)
+  const glance = useMemo(() => available.map(f => {
+    const pts = measurementSeries(S, f.key)
+    const last = pts.at(-1)
+    if (!last) return null
+    const ch = trendChange(pts)
+    return { field: f, key: f.key, value: last.y, unit: fieldUnit(f, S.unit), delta: ch ? ch.delta : null }
+  }).filter(Boolean), [S, available])
 
   const remove = entry => confirmSheet({
     title: t('Delete measurements?'),
@@ -218,6 +229,23 @@ export default function Measurements() {
       <div style={{ flex: 1, marginInlineStart: 12 }}><h1>{t('Body measurements')}</h1><div className="sub">{t('Circumference & composition')}</div></div>
       <button className="iconbtn" onClick={manageMeasurementsSheet} aria-label={t('Choose measurements')}><Icon name="gear" /></button>
     </div>
+
+    {glance.length > 1 && <div className="card">
+      <div className="muted small" style={{ marginBottom: 8 }}>{t('Body measurements')}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: 8 }}>
+        {glance.map(g => <button key={g.key} type="button" onClick={() => setSelected(g.key)} aria-pressed={g.key === key}
+          style={{ textAlign: 'start', padding: '8px 10px', borderRadius: 12, cursor: 'pointer',
+            border: (g.key === key ? 2 : 1) + 'px solid ' + (g.key === key ? 'var(--teal)' : 'var(--sep-op)'),
+            background: 'transparent', color: 'inherit' }}>
+          <div className="small dim" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t(g.field.label)}</div>
+          <div style={{ fontWeight: 700, marginTop: 2 }}>{withUnit(g.value, g.unit)}</div>
+          {g.delta != null && Math.abs(g.delta) >= 0.05 && <div className="small" style={{ color: 'var(--label-2)', display: 'flex', alignItems: 'center', gap: 3, marginTop: 1 }}>
+            <Icon name={g.delta > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 11 }} />
+            {withUnit(Math.abs(Math.round(g.delta * 10) / 10), g.unit)}
+          </div>}
+        </button>)}
+      </div>
+    </div>}
 
     <div className="card">
       <div className="row between" style={{ marginBottom: 10 }}>
@@ -234,7 +262,7 @@ export default function Measurements() {
       </div>}
       <Segmented className="seg-range" value={range} onChange={setRange}
         options={[{ value: 30, label: '1M' }, { value: 90, label: '3M' }, { value: 365, label: '1Y' }, { value: 0, label: t('All') }]} />
-      <div className="chart"><LineChart points={points} h={170} unit={unit} color="var(--teal)" /></div>
+      <div className="chart"><LineChart points={points} h={170} unit={unit} color="var(--teal)" overlay={trend.length > 1 ? [{ points: trend, color: 'var(--label-3)' }] : null} /></div>
     </div>
 
     {!available.length && <div className="card">

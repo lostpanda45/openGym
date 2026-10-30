@@ -15,7 +15,7 @@ const W = 340   // viewBox width; the svg stretches to its container, height com
 //   series draws several lines instead of one: [{ points, color }] (issue #145, one per set
 //   number). `points` then only anchors the hover — one per date, its `note` the tooltip — and
 //   the y axis spans every series.
-export default function LineChart({ points, h = 150, unit = '', color = 'var(--acc)', axes = true, goal = null, invert = false, series = null }) {
+export default function LineChart({ points, h = 150, unit = '', color = 'var(--acc)', axes = true, goal = null, invert = false, series = null, overlay = null }) {
   const svgRef = useRef(null)
   const wrapRef = useRef(null)
   const tipRef = useRef(null)
@@ -163,6 +163,15 @@ export default function LineChart({ points, h = 150, unit = '', color = 'var(--a
             <circle key={'m' + i} cx={X(p.t)} cy={Y(p.y)} r={2.4 + p.m * 3} fill={color} opacity={0.3 + p.m * 0.7} />))}
           <circle cx={X(last.t)} cy={Y(last.y)} r="4" fill={color} />
         </>}
+        {/* A smooth trend drawn over the points. Purely visual: the hover, the tooltip and the
+            y axis still describe the real readings, so the line never claims a value that was
+            not measured. */}
+        {(Array.isArray(overlay) ? overlay : overlay ? [overlay] : []).map((o, k) => o && o.points && o.points.length > 1 && (
+          <polyline key={'o' + k} points={o.points.map(p => X(p.t).toFixed(1) + ',' + Y(p.y).toFixed(1)).join(' ')}
+            fill="none" stroke={o.color || 'var(--label-3)'} strokeWidth={o.width || 1.8}
+            strokeDasharray={o.dash || '5 4'} strokeLinejoin="round" strokeLinecap="round"
+            opacity={o.opacity ?? 0.9} />
+        ))}
         {hover && <g>
           <line className="cvl" x1={hover.x} y1={P.t} x2={hover.x} y2={H - P.b} stroke="var(--label-3)" strokeWidth="1" strokeDasharray="3 3" />
           {multi
